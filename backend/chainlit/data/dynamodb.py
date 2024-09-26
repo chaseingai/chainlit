@@ -12,7 +12,8 @@ import aiohttp
 import boto3  # type: ignore
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from chainlit.context import context
-from chainlit.data import BaseDataLayer, BaseStorageClient, queue_until_user_message
+from chainlit.data.base import BaseDataLayer, BaseStorageClient
+from chainlit.data.utils import queue_until_user_message
 from chainlit.element import ElementDict
 from chainlit.logger import logger
 from chainlit.step import StepDict
@@ -36,7 +37,6 @@ _logger.setLevel(logging.WARNING)
 
 
 class DynamoDBDataLayer(BaseDataLayer):
-
     def __init__(
         self,
         table_name: str,
@@ -92,6 +92,10 @@ class DynamoDBDataLayer(BaseDataLayer):
             ExpressionAttributeNames=expression_attribute_names,
             ExpressionAttributeValues=self._serialize_item(expression_attribute_values),
         )
+
+    @property
+    def context(self):
+        return context
 
     async def get_user(self, identifier: str) -> Optional["PersistedUser"]:
         _logger.info("DynamoDB: get_user identifier=%s", identifier)
@@ -173,11 +177,11 @@ class DynamoDBDataLayer(BaseDataLayer):
 
         if not feedback.forId:
             raise ValueError(
-                "DynamoDB datalayer expects value for feedback.threadId got None"
+                "DynamoDB data layer expects value for feedback.threadId got None"
             )
 
         feedback.id = f"THREAD#{feedback.threadId}::STEP#{feedback.forId}"
-        searialized_feedback = self._type_serializer.serialize(asdict(feedback))
+        serialized_feedback = self._type_serializer.serialize(asdict(feedback))
 
         self.client.update_item(
             TableName=self.table_name,
@@ -187,7 +191,7 @@ class DynamoDBDataLayer(BaseDataLayer):
             },
             UpdateExpression="SET #feedback = :feedback",
             ExpressionAttributeNames={"#feedback": "feedback"},
-            ExpressionAttributeValues={":feedback": searialized_feedback},
+            ExpressionAttributeValues={":feedback": serialized_feedback},
         )
 
         return feedback.id
@@ -241,7 +245,7 @@ class DynamoDBDataLayer(BaseDataLayer):
         if not element.mime:
             element.mime = "application/octet-stream"
 
-        context_user = context.session.user
+        context_user = self.context.session.user
         user_folder = getattr(context_user, "id", "unknown")
         file_object_key = f"{user_folder}/{element.thread_id}/{element.id}"
 
@@ -293,7 +297,7 @@ class DynamoDBDataLayer(BaseDataLayer):
 
     @queue_until_user_message()
     async def delete_element(self, element_id: str, thread_id: Optional[str] = None):
-        thread_id = context.session.thread_id
+        thread_id = self.context.session.thread_id
         _logger.info(
             "DynamoDB: delete_element thread=%s element=%s", thread_id, element_id
         )
@@ -349,7 +353,7 @@ class DynamoDBDataLayer(BaseDataLayer):
 
     @queue_until_user_message()
     async def delete_step(self, step_id: str):
-        thread_id = context.session.thread_id
+        thread_id = self.context.session.thread_id
         _logger.info("DynamoDB: delete_feedback thread=%s step=%s", thread_id, step_id)
 
         self.client.delete_item(
@@ -578,9 +582,6 @@ class DynamoDBDataLayer(BaseDataLayer):
             },
             updates=item,
         )
-
-    async def delete_user_session(self, id: str) -> bool:
-        return True  # Not sure why documentation wants this
 
     async def build_debug_url(self) -> str:
         return ""
